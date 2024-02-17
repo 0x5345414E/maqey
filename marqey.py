@@ -1,42 +1,76 @@
+import requests
+from bs4 import BeautifulSoup
 import curses
 import time
 
-def marquee(win):
-    text = "Fetch some headlines... "
-    delay = 0.05
-    curses.curs_set(0)  # Hide cursor
+"""Global variables for fetching headlines"""
+last_fetch_time = 0
+fetch_interval = 300  # 5 minutes
 
-    # Get maximum dimensions of the window
-    maxy, maxx = win.getmaxyx()
 
-    # Calculate the position to start the text to have it centered
-    text_length = len(text)
-    if maxx < text_length:
-        start_pos = 0
-    else:
-        # Center the text
-        start_pos = (maxx - text_length) // 2
-
-    pos = maxx  # Start position for the scrolling effect
+def fetch_ap_headlines(url="https://apnews.com/"):
+    """Fetch the latest headlines from the AP News website."""
+    global last_fetch_time
+    current_time = time.time()
+    if current_time - last_fetch_time < fetch_interval:
+        print("Fetching headlines skipped due to rate limiting.")
+        return None
 
     try:
-        while True:
-            win.clear()  # Clear the window to create the margin effect
-            win.addstr(maxy - 2, 0, " " * maxx)
-            text_pos = pos % maxx
-            if text_pos + text_length > maxx:
-                # If the text wraps, only show the part that fits
-                win.addstr(maxy - 2, text_pos, text[max(0, maxx - text_pos):])
-            else:
-                win.addstr(maxy - 2, text_pos, text)
+        response = requests.get(url)
+        soup = BeautifulSoup(response.content, "lxml")
+        headlines = [
+            headline.get_text().strip()
+            for headline in soup.select("bsp-custom-headline h3")
+        ]
+        last_fetch_time = current_time
+        return headlines
+    except Exception as e:
+        print(f"Error fetching headlines: {e}")
+        return ["Error fetching headlines"]
 
-            win.refresh()  # Refresh the window to update the text display
-            pos -= 1  # Move text left
-            time.sleep(delay)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        curses.curs_set(1)  # Show cursor again
+def display_marquee(stdscr, delay=0.13): # Increase to delay speed in marquee
+    """Display a marquee of the latest AP News headlines."""
+    curses.curs_set(0)  # Hide cursor
+    stdscr.nodelay(True)  # Make getch non-blocking
+    maxy, maxx = stdscr.getmaxyx()
 
+    headlines = fetch_ap_headlines() or ["No new headlines."]
+    text = "   |   ".join(headlines) + " " * maxx  # Add trailing spaces equal to screen width
+    pos = maxx  # Start from the right side of the screen
+
+    while True:
+        stdscr.erase()  # Clear the screen to avoid flickering
+        
+        # Calculate the width of the text to be displayed
+        text_width = len(text)
+        
+        # Calculate the position to start displaying text from
+        start_pos = pos % (text_width + maxx)
+        
+        # Display the text
+        # If the starting position of the text is greater than the screen width, it means the
+        # text has scrolled off the screen, and we need to start from the beginning
+        if start_pos > maxx:
+            to_display = text[:maxx]  # Display the beginning of the text
+            stdscr.addstr(maxy - 2, 0, to_display)
+        else:
+            to_display = text[start_pos:start_pos + maxx]
+            stdscr.addstr(maxy - 2, 0, to_display)
+
+        stdscr.refresh()
+        pos -= 1  # Move text to the left
+
+        # Check if the entire text has scrolled off the left; if so, reset position
+        if pos < -text_width:
+            pos = maxx  # Reset position to start from the right again
+
+        time.sleep(delay)  # Control the scroll speed
+
+        # Exit on 'q' key press
+        if stdscr.getch() == ord('q'):
+            break
+        
 if __name__ == "__main__":
-    curses.wrapper(marquee)
+    """Run the marquee in the terminal."""
+    curses.wrapper(display_marquee)
